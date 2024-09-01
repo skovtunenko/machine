@@ -1,5 +1,7 @@
-.idea
-vendor
+.idea/
+.vscode/
+
+vendor/
 tmp
 *.prof
 cover.out

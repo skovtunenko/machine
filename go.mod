@@ -1,3 +1,3 @@
-module github.com/autom8ter/machine/v4
+module github.com/skovtunenko/machine
 
-go 1.18
+go 1.23.0
