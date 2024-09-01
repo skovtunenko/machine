@@ -19,21 +19,6 @@ type MessageFilterFunc func(ctx context.Context, msg Message) (bool, error)
 // Func is a first class function that is asynchronously executed.
 type Func func(ctx context.Context) error
 
-// Machine is an interface for highly asynchronous Go applications.
-type Machine interface {
-	// Publish synchronously publishes the Message.
-	Publish(ctx context.Context, msg Message)
-	// Subscribe synchronously subscribes to messages on a given channel,  executing the given HandlerFunc UNTIL the context cancels OR false is returned by the HandlerFunc..
-	// Glob matching IS supported for subscribing to multiple channels at once.
-	Subscribe(ctx context.Context, channel string, handler MessageHandlerFunc, options ...SubscriptionOpt) error
-	// Go asynchronously executes the given Func
-	Go(ctx context.Context, fn Func)
-	// Current returns the number of active jobs that are running concurrently.
-	Current() int
-	// Wait blocks until all active async functions(Go) exit.
-	Wait() error
-}
-
 const defaultMaxRoutines = 1000
 const errChanSize = 100
 
@@ -61,7 +46,8 @@ func WithSubscriptionID(id string) SubscriptionOpt {
 	}
 }
 
-type machine struct {
+// Machine is core entity in this package.
+type Machine struct {
 	max           int
 	subscriptions *sync.Map
 	current       chan struct{}
@@ -89,7 +75,7 @@ func WithThrottledRoutines(max int) Opt {
 //
 // The second return value is a cleanup function that should be called to close the machine instance.
 // Cleanup function blocks until all active routine's exit, then closes all active subscriptions.
-func New(opts ...Opt) (Machine, func()) {
+func New(opts ...Opt) (*Machine, func()) {
 	options := &Options{}
 	for _, o := range opts {
 		o(options)
@@ -97,7 +83,7 @@ func New(opts ...Opt) (Machine, func()) {
 	if options.maxRoutines <= 0 {
 		options.maxRoutines = defaultMaxRoutines
 	}
-	m := &machine{
+	m := &Machine{
 		max:           options.maxRoutines,
 		current:       make(chan struct{}, options.maxRoutines),
 		subscriptions: &sync.Map{},
@@ -115,11 +101,13 @@ func New(opts ...Opt) (Machine, func()) {
 	return m, closeFn
 }
 
-func (m *machine) Current() int {
+// Current returns the number of active jobs that are running concurrently.
+func (m *Machine) Current() int {
 	return len(m.current)
 }
 
-func (m *machine) Go(ctx context.Context, fn Func) {
+// Go asynchronously executes the given Func.
+func (m *Machine) Go(ctx context.Context, fn Func) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -149,7 +137,9 @@ type Message struct {
 	Body    interface{}
 }
 
-func (p *machine) Subscribe(ctx context.Context, channel string, handler MessageHandlerFunc, options ...SubscriptionOpt) error {
+// Subscribe synchronously subscribes to messages on a given channel,  executing the given HandlerFunc UNTIL the context cancels OR false is returned by the HandlerFunc..
+// Glob matching IS supported for subscribing to multiple channels at once.
+func (p *Machine) Subscribe(ctx context.Context, channel string, handler MessageHandlerFunc, options ...SubscriptionOpt) error {
 	opts := &SubscriptionOptions{}
 	for _, o := range options {
 		o(opts)
@@ -187,7 +177,8 @@ func (p *machine) Subscribe(ctx context.Context, channel string, handler Message
 	}
 }
 
-func (p *machine) Publish(ctx context.Context, msg Message) {
+// Publish synchronously publishes the Message.
+func (p *Machine) Publish(ctx context.Context, msg Message) {
 	p.subscriptions.Range(func(key, value any) bool {
 
 		split := strings.Split(key.(string), "|||")
@@ -203,7 +194,8 @@ func (p *machine) Publish(ctx context.Context, msg Message) {
 	return
 }
 
-func (m *machine) Wait() error {
+// Wait blocks until all active async functions(Go) exit.
+func (m *Machine) Wait() error {
 	m.wg.Wait()
 	select {
 	case err := <-m.errChan:
@@ -213,7 +205,7 @@ func (m *machine) Wait() error {
 	}
 }
 
-func (p *machine) setupSubscription(channel, subId string) (chan Message, func()) {
+func (p *Machine) setupSubscription(channel, subId string) (chan Message, func()) {
 	if subId == "" {
 		subId = fmt.Sprintf("%v", rand.Int())
 	}
